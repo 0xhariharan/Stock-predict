@@ -37,7 +37,7 @@ def calculate_indicators(stock_data):
     stock_data['Volatility'] = stock_data['Close'].rolling(window=14).std()
 
     # Drop rows with NaN values after indicator calculations
-    stock_data = stock_data.dropna()
+    stock_data = stock_data.dropna(subset=['Close', 'SMA_50', 'SMA_200', 'RSI', 'Upper_BB', 'Lower_BB', 'MACD', 'Signal', 'Volatility'])
 
     return stock_data
 
@@ -51,7 +51,6 @@ def fetch_data(ticker, start_date, end_date):
 
 # Preprocessing data for LSTM
 def preprocess_data(stock_data):
-    stock_data = stock_data.dropna(subset=['Close', 'SMA_50', 'SMA_200', 'RSI', 'Upper_BB', 'Lower_BB', 'MACD', 'Signal', 'Volatility'])
     features = stock_data[['Close', 'SMA_50', 'SMA_200', 'RSI', 'Upper_BB', 'Lower_BB', 'MACD', 'Signal', 'Volatility']]
     target = stock_data['Close']
     
