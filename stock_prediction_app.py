@@ -1,4 +1,5 @@
-pip install ta-lib
+pip install talib-binary
+
 import os
 import numpy as np
 import pandas as pd
