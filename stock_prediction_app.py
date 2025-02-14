@@ -17,9 +17,9 @@ if not os.path.exists("models"):
     os.makedirs("models")
 
 # Your Upstox API credentials
-api_key = "6be46ee7-8e84-4c37-9353-63aa896d09bd"
-api_secret = "2eqwmvko5i"
-access_token = "eyJ0eXAiOiJKV1QiLCJrZXlfaWQiOiJza192MS4wIiwiYWxnIjoiSFMyNTYifQ.eyJzdWIiOiIyQ0NYRUIiLCJqdGkiOiI2N2FlY2Q2NmZkNjhlZjVlYWZhYzg2ZjUiLCJpc011bHRpQ2xpZW50IjpmYWxzZSwiaWF0IjoxNzM5NTA5MDk0LCJpc3MiOiJ1ZGFwaS1nYXRld2F5LXNlcnZpY2UiLCJleHAiOjE3Mzk1NzA0MDB9.sMDkSpgfAaQRjFR7vHSspZ557NWVHIQMUm58UdT1KPI"
+api_key = "6be46ee7-8e84-4c37-9353-63aa896d09bd"  # Your API Key
+api_secret = "2eqwmvko5i"  # Your API Secret
+access_token = "eyJ0eXAiOiJKV1QiLCJrZXlfaWQiOiJza192MS4wIiwiYWxnIjoiSFMyNTYifQ.eyJzdWIiOiIyQ0NYRUIiLCJqdGkiOiI2N2FlY2Q2NmZkNjhlZjVlYWZhYzg2ZjUiLCJpc011bHRpQ2xpZW50IjpmYWxzZSwiaWF0IjoxNzM5NTA5MDk0LCJpc3MiOiJ1ZGFwaS1nYXRld2F5LXNlcnZpY2UiLCJleHAiOjE3Mzk1NzA0MDB9.sMDkSpgfAaQRjFR7vHSspZ557NWVHIQMUm58UdT1KPI"  # Your Access Token
 
 # Initialize the Upstox API
 upstox = Upstox(api_key, api_secret)
@@ -191,21 +191,4 @@ if retrain_button:
 
 # Plot actual vs predicted prices
 st.subheader("📊 Predicted vs Actual Prices")
-if ticker:
-    st.write("Visualizing the model's accuracy...")
-    stock_data = get_stock_data(ticker)
-    stock_data = add_technical_indicators(stock_data)
-
-    _, _, X_test, Y_test, scaler = preprocess_data(stock_data)
-    model = load_model(ticker)
-    predicted_stock_price = model.predict(X_test)
-
-    predicted_stock_price = scaler.inverse_transform(
-        np.concatenate([predicted_stock_price, np.zeros((predicted_stock_price.shape[0], 8))], axis=1)
-    )[:, 0]
-
-    plt.figure(figsize=(10, 5))
-    plt.plot(predicted_stock_price, label="Predicted")
-    plt.plot(Y_test, label="Actual")
-    plt.legend()
-    st.pyplot(plt)
+# Visualization code here (You can use matplotlib or seaborn to plot graphs)
