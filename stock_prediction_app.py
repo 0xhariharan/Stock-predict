@@ -102,7 +102,7 @@ def build_lstm_model(input_shape):
     return model
 
 # Function to train the model and get predictions
-def train_and_predict(ticker):
+def train_and_predict(ticker, progress_bar):
     stock_data = get_stock_data(ticker)
     stock_data = add_technical_indicators(stock_data)
     
@@ -126,7 +126,10 @@ def train_and_predict(ticker):
         rmse_scores.append(rmse)
         r2 = r2_score(Y_test_actual, predicted_stock_price)
         r2_scores.append(r2)
-    
+        
+        # Update progress bar
+        progress_bar.progress((i + 1) / 10)
+
     final_prediction = np.mean(predictions)
     average_rmse = np.mean(rmse_scores)
     average_r2 = np.mean(r2_scores)
@@ -135,8 +138,10 @@ def train_and_predict(ticker):
 
 # Function to get the next day prediction
 def get_next_day_prediction(ticker):
-    final_prediction, average_rmse, average_r2 = train_and_predict(ticker)
-    
+    with st.spinner('Training model... Please wait'):
+        progress_bar = st.progress(0)
+        final_prediction, average_rmse, average_r2 = train_and_predict(ticker, progress_bar)
+        
     next_day_date = (datetime.datetime.now() + datetime.timedelta(days=1)).strftime('%Y-%m-%d')
     
     st.write(f"Prediction for {ticker} on {next_day_date}: {final_prediction}")
@@ -148,5 +153,7 @@ st.title("Stock Price Prediction")
 st.write("Enter the stock ticker symbol to predict its next day price:")
 
 ticker = st.text_input("Stock Ticker (e.g., AAPL):")
-if ticker:
+predict_button = st.button("Predict")
+
+if ticker and predict_button:
     get_next_day_prediction(ticker)
