@@ -18,8 +18,11 @@ def get_stock_data(ticker, interval='1d'):
 
 # Adding technical indicators to improve model's learning
 def add_technical_indicators(stock_data):
-    stock_data['SMA_50'] = stock_data['Close'].rolling(window=50).mean()
-    stock_data['SMA_200'] = stock_data['Close'].rolling(window=200).mean()
+    # Calculate technical indicators only if enough data is available
+    if len(stock_data) >= 50:
+        stock_data['SMA_50'] = stock_data['Close'].rolling(window=50).mean()
+    if len(stock_data) >= 200:
+        stock_data['SMA_200'] = stock_data['Close'].rolling(window=200).mean()
 
     stock_data['RSI'] = compute_rsi(stock_data['Close'], 14)
     stock_data['Upper_BB'], stock_data['Lower_BB'] = compute_bollinger_bands(stock_data['Close'], window=20)
@@ -62,8 +65,9 @@ def compute_volatility(data, window=30):
 
 # Function to preprocess the stock data
 def preprocess_data(stock_data):
-    # Ensure there is no missing data
-    stock_data = stock_data.dropna(subset=['Close', 'SMA_50', 'SMA_200', 'RSI', 'Upper_BB', 'Lower_BB', 'MACD', 'Signal', 'Volatility'])
+    # Ensure there is no missing data in the required columns
+    required_columns = ['Close', 'SMA_50', 'SMA_200', 'RSI', 'Upper_BB', 'Lower_BB', 'MACD', 'Signal', 'Volatility']
+    stock_data = stock_data.dropna(subset=required_columns)
     
     if stock_data.empty:
         raise ValueError("Stock data is empty after removing missing values.")
