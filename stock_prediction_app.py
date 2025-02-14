@@ -1,5 +1,4 @@
 import streamlit as st
-import yfinance as yf
 import numpy as np
 import pandas as pd
 import tensorflow as tf
@@ -8,17 +7,42 @@ from sklearn.metrics import mean_squared_error, r2_score
 from tensorflow.keras.models import Sequential
 from tensorflow.keras.layers import LSTM, Dense, Dropout
 import datetime
-import matplotlib.pyplot as plt
 import os
+import requests
+import matplotlib.pyplot as plt
+from upstox_api.api import *
 
 # Ensure models directory exists
 if not os.path.exists("models"):
     os.makedirs("models")
 
-# Function to load stock data
-def get_stock_data(ticker):
-    stock_data = yf.download(ticker, period="10y", interval="1d")
-    return stock_data
+# Your Upstox API credentials
+api_key = "6be46ee7-8e84-4c37-9353-63aa896d09bd"
+api_secret = "2eqwmvko5i"
+access_token = "eyJ0eXAiOiJKV1QiLCJrZXlfaWQiOiJza192MS4wIiwiYWxnIjoiSFMyNTYifQ.eyJzdWIiOiIyQ0NYRUIiLCJqdGkiOiI2N2FlY2Q2NmZkNjhlZjVlYWZhYzg2ZjUiLCJpc011bHRpQ2xpZW50IjpmYWxzZSwiaWF0IjoxNzM5NTA5MDk0LCJpc3MiOiJ1ZGFwaS1nYXRld2F5LXNlcnZpY2UiLCJleHAiOjE3Mzk1NzA0MDB9.sMDkSpgfAaQRjFR7vHSspZ557NWVHIQMUm58UdT1KPI"
+
+# Initialize the Upstox API
+upstox = Upstox(api_key, api_secret)
+upstox.set_access_token(access_token)
+
+# Function to get stock data from Upstox API
+def get_stock_data(ticker, interval="1d", period="10y"):
+    try:
+        quote = upstox.get_live_market_data('NSE', ticker)
+        stock_data = {
+            'Date': [quote['timestamp']],
+            'Open': [quote['open_price']],
+            'High': [quote['high_price']],
+            'Low': [quote['low_price']],
+            'Close': [quote['last_price']],
+            'Volume': [quote['quantity_traded']]
+        }
+        stock_df = pd.DataFrame(stock_data)
+        stock_df['Date'] = pd.to_datetime(stock_df['Date'])
+        return stock_df
+    except Exception as e:
+        st.error(f"Error fetching data: {e}")
+        return None
 
 # Compute RSI (Relative Strength Index)
 def compute_rsi(data, window=14):
