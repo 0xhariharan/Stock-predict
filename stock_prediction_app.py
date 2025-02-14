@@ -151,6 +151,16 @@ def train_and_predict(ticker, progress_bar, retrain=False):
     
     return predictions, rmse, r2
 
+# Function to get the prediction for the next day
+def get_next_day_prediction(ticker, retrain=False):
+    st.write(f"Getting prediction for {ticker}")
+    progress_bar = st.progress(0)
+    final_prediction, rmse, r2 = train_and_predict(ticker, progress_bar, retrain)
+    
+    st.write(f"Predicted price for next day: ₹{final_prediction:.2f}")
+    st.write(f"RMSE: {rmse:.2f}")
+    st.write(f"R²: {r2:.2f}")
+
 # Streamlit UI
 st.title("Stock Price Prediction")
 st.write("Enter the stock ticker symbol to predict its next day price:")
