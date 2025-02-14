@@ -107,6 +107,7 @@ def load_model(ticker):
 # Function to train the model and get predictions
 def train_and_predict(ticker, progress_bar, retrain=False):
     if retrain or not os.path.exists(f"models/{ticker}_model.h5"):
+        print(f"Retraining model for {ticker}")
         stock_data = get_stock_data(ticker)
         stock_data = add_technical_indicators(stock_data)
 
@@ -116,8 +117,9 @@ def train_and_predict(ticker, progress_bar, retrain=False):
         model.fit(X_train, Y_train, epochs=40, batch_size=64, verbose=0)
 
         save_model(model, ticker)
-
+        print(f"Model saved for {ticker}")
     else:
+        print(f"Loading existing model for {ticker}")
         model = load_model(ticker)
 
     stock_data = get_stock_data(ticker)
