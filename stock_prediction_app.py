@@ -68,7 +68,7 @@ def preprocess_data(stock_data):
         scalers[i] = MinMaxScaler(feature_range=(0, 1))
         scaled_data[:, i] = scalers[i].fit_transform(features[:, i].reshape(-1, 1)).flatten()
 
-    train_size = int(len(scaled_data) * 0.9)  # Train-test split (90-10)
+    train_size = int(len(scaled_data) * 0.8)  # Train-test split (80-20 for better validation)
     train_data, test_data = scaled_data[:train_size], scaled_data[train_size:]
 
     def create_dataset(data, time_step=50):  # Increased from 30 to 50 days
@@ -86,13 +86,19 @@ def preprocess_data(stock_data):
 # Function to build a stronger LSTM model
 def build_lstm_model(input_shape):
     model = Sequential([
-        LSTM(80, return_sequences=True, input_shape=input_shape),
-        Dropout(0.2),
-        LSTM(80, return_sequences=False),
-        Dropout(0.2),
+        LSTM(100, return_sequences=True, input_shape=input_shape),
+        Dropout(0.3),  # Increased dropout for better generalization
+        LSTM(50, return_sequences=True),  # Extra LSTM layer added
+        Dropout(0.3),
+        LSTM(50, return_sequences=False),
+        Dropout(0.3),
         Dense(1)
     ])
-    model.compile(optimizer='adam', loss='mean_squared_error')
+
+    # Learning rate scheduling
+    optimizer = tf.keras.optimizers.Adam(learning_rate=0.001, decay=1e-6)
+    model.compile(optimizer=optimizer, loss='mean_squared_error')
+    
     return model
 
 # Function to train and predict
@@ -103,7 +109,7 @@ def train_and_predict(ticker, progress_bar):
     X_train, Y_train, X_test, Y_test, scalers = preprocess_data(stock_data)
 
     model = build_lstm_model((X_train.shape[1], X_train.shape[2]))
-    model.fit(X_train, Y_train, epochs=40, batch_size=32, verbose=0)  # Increased to 40 epochs
+    model.fit(X_train, Y_train, epochs=40, batch_size=64, verbose=0)  # Batch size increased to 64
 
     predicted_stock_price = model.predict(X_test)
 
