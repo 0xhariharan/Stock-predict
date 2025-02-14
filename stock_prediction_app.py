@@ -1,107 +1,187 @@
+import streamlit as st
 import yfinance as yf
-import pandas as pd
 import numpy as np
-from sklearn.preprocessing import MinMaxScaler
-from sklearn.model_selection import train_test_split
-from sklearn.metrics import mean_squared_error, r2_score
+import pandas as pd
 import tensorflow as tf
+from sklearn.preprocessing import MinMaxScaler
+from sklearn.metrics import mean_squared_error, r2_score
 from tensorflow.keras.models import Sequential
-from tensorflow.keras.layers import LSTM, Dense
+from tensorflow.keras.layers import LSTM, Dense, Dropout
+import datetime
+import matplotlib.pyplot as plt
+import os
 
-# Function to calculate technical indicators
-def calculate_indicators(stock_data):
-    # Calculating Simple Moving Averages (SMA)
+# Ensure models directory exists
+if not os.path.exists("models"):
+    os.makedirs("models")
+
+# Function to load stock data
+def get_stock_data(ticker):
+    stock_data = yf.download(ticker, period="10y", interval="1d")
+    return stock_data
+
+# Compute RSI (Relative Strength Index)
+def compute_rsi(data, window=14):
+    diff = data.diff()
+    gain = (diff.where(diff > 0, 0)).rolling(window=window).mean()
+    loss = (-diff.where(diff < 0, 0)).rolling(window=window).mean()
+    rs = gain / loss
+    rsi = 100 - (100 / (1 + rs))
+    return rsi
+
+# Compute Bollinger Bands
+def compute_bollinger_bands(data, window=20):
+    rolling_mean = data.rolling(window=window).mean()
+    rolling_std = data.rolling(window=window).std()
+    upper_band = rolling_mean + (rolling_std * 2)
+    lower_band = rolling_mean - (rolling_std * 2)
+    return upper_band, lower_band
+
+# Compute MACD (Moving Average Convergence Divergence)
+def compute_macd(data, short_window=12, long_window=26, signal_window=9):
+    short_ema = data.ewm(span=short_window, min_periods=1, adjust=False).mean()
+    long_ema = data.ewm(span=long_window, min_periods=1, adjust=False).mean()
+    macd = short_ema - long_ema
+    signal = macd.ewm(span=signal_window, min_periods=1, adjust=False).mean()
+    return macd, signal
+
+# Compute Historical Volatility
+def compute_volatility(data, window=30):
+    log_returns = np.log(data / data.shift(1))
+    volatility = log_returns.rolling(window=window).std() * np.sqrt(window)
+    return volatility
+
+# Add technical indicators to stock data
+def add_technical_indicators(stock_data):
     stock_data['SMA_50'] = stock_data['Close'].rolling(window=50).mean()
     stock_data['SMA_200'] = stock_data['Close'].rolling(window=200).mean()
-
-    # Relative Strength Index (RSI)
-    delta = stock_data['Close'].diff()
-    gain = delta.where(delta > 0, 0)
-    loss = -delta.where(delta < 0, 0)
-    avg_gain = gain.rolling(window=14).mean()
-    avg_loss = loss.rolling(window=14).mean()
-    rs = avg_gain / avg_loss
-    stock_data['RSI'] = 100 - (100 / (1 + rs))
-
-    # Bollinger Bands
-    stock_data['Upper_BB'] = stock_data['SMA_50'] + (stock_data['Close'].rolling(window=50).std() * 2)
-    stock_data['Lower_BB'] = stock_data['SMA_50'] - (stock_data['Close'].rolling(window=50).std() * 2)
-
-    # MACD (Moving Average Convergence Divergence)
-    stock_data['EMA_12'] = stock_data['Close'].ewm(span=12, adjust=False).mean()
-    stock_data['EMA_26'] = stock_data['Close'].ewm(span=26, adjust=False).mean()
-    stock_data['MACD'] = stock_data['EMA_12'] - stock_data['EMA_26']
-    stock_data['Signal'] = stock_data['MACD'].ewm(span=9, adjust=False).mean()
-
-    # Volatility
-    stock_data['Volatility'] = stock_data['Close'].rolling(window=50).std()
-
-    # Drop rows with missing values (e.g., first few rows due to rolling calculations)
+    stock_data['RSI'] = compute_rsi(stock_data['Close'])
+    stock_data['Upper_BB'], stock_data['Lower_BB'] = compute_bollinger_bands(stock_data['Close'])
+    stock_data['MACD'], stock_data['Signal'] = compute_macd(stock_data['Close'])
+    stock_data['Volatility'] = compute_volatility(stock_data['Close'])
     stock_data.dropna(inplace=True)
-    
     return stock_data
 
-# Fetch historical stock data
-def fetch_data(ticker, start_date, end_date):
-    stock_data = yf.download(ticker, start=start_date, end=end_date)
-    stock_data = calculate_indicators(stock_data)
-    return stock_data
-
-# Preprocess the data for LSTM model
+# Preprocess data
 def preprocess_data(stock_data):
-    features = stock_data[['Close', 'SMA_50', 'SMA_200', 'RSI', 'Upper_BB', 'Lower_BB', 'MACD', 'Signal', 'Volatility']]
-    target = stock_data['Close']
-
+    features = stock_data[['Close', 'SMA_50', 'SMA_200', 'RSI', 'Upper_BB', 'Lower_BB', 'MACD', 'Signal', 'Volatility']].values
     scaler = MinMaxScaler(feature_range=(0, 1))
-    features_scaled = scaler.fit_transform(features)
+    scaled_data = scaler.fit_transform(features)
 
-    # Split data into training and testing sets
-    X = features_scaled
-    Y = target.values
-    X_train, X_test, Y_train, Y_test = train_test_split(X, Y, test_size=0.2, shuffle=False)
+    train_size = int(len(scaled_data) * 0.8)
+    train_data = scaled_data[:train_size]
+    test_data = scaled_data[train_size:]
+
+    def create_dataset(data, time_step=60):
+        X, Y = [], []
+        for i in range(len(data) - time_step - 1):
+            X.append(data[i:(i + time_step), :-1])
+            Y.append(data[i + time_step, 0])
+        return np.array(X), np.array(Y)
+
+    X_train, Y_train = create_dataset(train_data)
+    X_test, Y_test = create_dataset(test_data)
 
     return X_train, Y_train, X_test, Y_test, scaler
 
-# Create LSTM model
-def create_model(X_train):
-    model = Sequential()
-    model.add(LSTM(units=50, return_sequences=True, input_shape=(X_train.shape[1], 1)))
-    model.add(LSTM(units=50, return_sequences=False))
-    model.add(Dense(units=1))
+# Build LSTM model
+def build_lstm_model(input_shape):
+    model = Sequential([
+        LSTM(100, return_sequences=True, input_shape=input_shape),
+        Dropout(0.2),
+        LSTM(100, return_sequences=False),
+        Dropout(0.2),
+        Dense(1)
+    ])
     model.compile(optimizer='adam', loss='mean_squared_error')
     return model
 
-# Train the model and make predictions
-def train_and_predict(ticker, start_date, end_date):
-    stock_data = fetch_data(ticker, start_date, end_date)
+# Save and load model functions
+def save_model(model, ticker):
+    model.save(f"models/{ticker}_model.h5")
+
+def load_model(ticker):
+    return tf.keras.models.load_model(f"models/{ticker}_model.h5")
+
+# Train or load the model
+def train_and_predict(ticker, progress_bar, retrain=False):
+    model_path = f"models/{ticker}_model.h5"
+
+    if retrain or not os.path.exists(model_path):
+        stock_data = get_stock_data(ticker)
+        stock_data = add_technical_indicators(stock_data)
+        X_train, Y_train, X_test, Y_test, scaler = preprocess_data(stock_data)
+
+        model = build_lstm_model((X_train.shape[1], X_train.shape[2]))
+        model.fit(X_train, Y_train, epochs=40, batch_size=64, verbose=0)
+
+        save_model(model, ticker)
+    else:
+        model = load_model(ticker)
+
+    stock_data = get_stock_data(ticker)
+    stock_data = add_technical_indicators(stock_data)
     X_train, Y_train, X_test, Y_test, scaler = preprocess_data(stock_data)
 
-    # Reshape X_train for LSTM input
-    X_train = X_train.reshape((X_train.shape[0], X_train.shape[1], 1))
-    X_test = X_test.reshape((X_test.shape[0], X_test.shape[1], 1))
+    predicted_stock_price = model.predict(X_test)
 
-    model = create_model(X_train)
-    model.fit(X_train, Y_train, epochs=10, batch_size=32)
+    predicted_stock_price = scaler.inverse_transform(
+        np.concatenate([predicted_stock_price, np.zeros((predicted_stock_price.shape[0], 8))], axis=1)
+    )[:, 0]
+    Y_test_actual = scaler.inverse_transform(
+        np.concatenate([Y_test.reshape(-1, 1), np.zeros((Y_test.shape[0], 8))], axis=1)
+    )[:, 0]
 
-    # Predict the stock prices
-    predictions = model.predict(X_test)
-    predictions = scaler.inverse_transform(predictions)
-    Y_test_rescaled = scaler.inverse_transform(Y_test.reshape(-1, 1))
+    rmse = np.sqrt(mean_squared_error(Y_test_actual, predicted_stock_price))
+    r2 = r2_score(Y_test_actual, predicted_stock_price)
 
-    # Calculate RMSE and R-squared
-    rmse = np.sqrt(mean_squared_error(Y_test_rescaled, predictions))
-    r2 = r2_score(Y_test_rescaled, predictions)
+    return predicted_stock_price[-1], rmse, r2
 
-    return predictions, rmse, r2
+# Get next day prediction
+def get_next_day_prediction(ticker, date, retrain=False):
+    with st.spinner('Training model... Please wait'):
+        progress_bar = st.progress(0)
+        final_prediction, rmse, r2 = train_and_predict(ticker, progress_bar, retrain)
 
-# Example usage
-if __name__ == '__main__':
-    ticker = 'TCS.NS'
-    start_date = '2020-01-01'
-    end_date = '2025-01-01'
+    next_day_date = (datetime.datetime.strptime(date, "%Y-%m-%d") + datetime.timedelta(days=1)).strftime('%Y-%m-%d')
 
-    predictions, rmse, r2 = train_and_predict(ticker, start_date, end_date)
+    st.write(f"**Prediction for {ticker} on {next_day_date}:** ₹{final_prediction:.2f}")
+    st.write(f"**RMSE:** {rmse:.2f}")
+    st.write(f"**R² Score:** {r2:.2f}")
 
-    print(f"Predicted stock prices: {predictions}")
-    print(f"RMSE: {rmse}")
-    print(f"R²: {r2}")
+# Streamlit UI
+st.title("📈 Stock Price Prediction")
+st.write("Enter the stock ticker to predict its next-day price.")
+
+ticker = st.text_input("Stock Ticker (e.g., TCS.NS):")
+date = st.date_input("Select Prediction Date", min_value=datetime.date.today())
+
+predict_button = st.button("Predict")
+retrain_button = st.button("Retrain Model")
+
+if ticker and predict_button:
+    get_next_day_prediction(ticker, str(date))
+
+if retrain_button:
+    get_next_day_prediction(ticker, str(date), retrain=True)
+
+# Plot actual vs predicted prices
+st.subheader("📊 Predicted vs Actual Prices")
+if ticker:
+    st.write("Visualizing the model's accuracy...")
+    stock_data = get_stock_data(ticker)
+    stock_data = add_technical_indicators(stock_data)
+
+    _, _, X_test, Y_test, scaler = preprocess_data(stock_data)
+    model = load_model(ticker)
+    predicted_stock_price = model.predict(X_test)
+
+    predicted_stock_price = scaler.inverse_transform(
+        np.concatenate([predicted_stock_price, np.zeros((predicted_stock_price.shape[0], 8))], axis=1)
+    )[:, 0]
+
+    plt.figure(figsize=(10, 5))
+    plt.plot(predicted_stock_price, label="Predicted")
+    plt.plot(Y_test, label="Actual")
+    plt.legend()
+    st.pyplot(plt)
