@@ -33,79 +33,75 @@ def calculate_indicators(stock_data):
     stock_data['MACD'] = stock_data['EMA_12'] - stock_data['EMA_26']
     stock_data['Signal'] = stock_data['MACD'].ewm(span=9, adjust=False).mean()
 
-    # Volatility (Standard deviation)
-    stock_data['Volatility'] = stock_data['Close'].rolling(window=14).std()
+    # Volatility
+    stock_data['Volatility'] = stock_data['Close'].rolling(window=50).std()
 
-    # Drop rows with NaN values after indicator calculations
-    stock_data = stock_data.dropna(subset=['Close', 'SMA_50', 'SMA_200', 'RSI', 'Upper_BB', 'Lower_BB', 'MACD', 'Signal', 'Volatility'])
-
+    # Drop rows with missing values (e.g., first few rows due to rolling calculations)
+    stock_data.dropna(inplace=True)
+    
     return stock_data
 
-# Function to fetch stock data and calculate indicators
+# Fetch historical stock data
 def fetch_data(ticker, start_date, end_date):
-    stock_data = yf.download(ticker, start=start_date, end=end_date, interval="1d")
-    if stock_data.empty:
-        raise ValueError(f"No data found for {ticker} from {start_date} to {end_date}.")
+    stock_data = yf.download(ticker, start=start_date, end=end_date)
     stock_data = calculate_indicators(stock_data)
     return stock_data
 
-# Preprocessing data for LSTM
+# Preprocess the data for LSTM model
 def preprocess_data(stock_data):
     features = stock_data[['Close', 'SMA_50', 'SMA_200', 'RSI', 'Upper_BB', 'Lower_BB', 'MACD', 'Signal', 'Volatility']]
     target = stock_data['Close']
-    
-    scaler = MinMaxScaler(feature_range=(0, 1))
-    scaled_features = scaler.fit_transform(features)
-    X = []
-    y = []
-    for i in range(60, len(stock_data)):
-        X.append(scaled_features[i-60:i])
-        y.append(target[i])
-    
-    X = np.array(X)
-    y = np.array(y)
-    
-    return X, y, scaler
 
-# Function to create and train the LSTM model
+    scaler = MinMaxScaler(feature_range=(0, 1))
+    features_scaled = scaler.fit_transform(features)
+
+    # Split data into training and testing sets
+    X = features_scaled
+    Y = target.values
+    X_train, X_test, Y_train, Y_test = train_test_split(X, Y, test_size=0.2, shuffle=False)
+
+    return X_train, Y_train, X_test, Y_test, scaler
+
+# Create LSTM model
 def create_model(X_train):
     model = Sequential()
-    model.add(LSTM(units=50, return_sequences=True, input_shape=(X_train.shape[1], X_train.shape[2])))
+    model.add(LSTM(units=50, return_sequences=True, input_shape=(X_train.shape[1], 1)))
     model.add(LSTM(units=50, return_sequences=False))
     model.add(Dense(units=1))
     model.compile(optimizer='adam', loss='mean_squared_error')
     return model
 
-# Function to train and predict stock prices
+# Train the model and make predictions
 def train_and_predict(ticker, start_date, end_date):
     stock_data = fetch_data(ticker, start_date, end_date)
-    
-    X, y, scaler = preprocess_data(stock_data)
-    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, shuffle=False)
-    
+    X_train, Y_train, X_test, Y_test, scaler = preprocess_data(stock_data)
+
+    # Reshape X_train for LSTM input
+    X_train = X_train.reshape((X_train.shape[0], X_train.shape[1], 1))
+    X_test = X_test.reshape((X_test.shape[0], X_test.shape[1], 1))
+
     model = create_model(X_train)
-    model.fit(X_train, y_train, epochs=10, batch_size=32)
-    
-    # Predict on the test data
+    model.fit(X_train, Y_train, epochs=10, batch_size=32)
+
+    # Predict the stock prices
     predictions = model.predict(X_test)
-    
-    # Inverse scale predictions and actual values
     predictions = scaler.inverse_transform(predictions)
-    y_test = scaler.inverse_transform(y_test.reshape(-1, 1))
-    
-    # Calculate metrics
-    rmse = np.sqrt(mean_squared_error(y_test, predictions))
-    r2 = r2_score(y_test, predictions)
-    
+    Y_test_rescaled = scaler.inverse_transform(Y_test.reshape(-1, 1))
+
+    # Calculate RMSE and R-squared
+    rmse = np.sqrt(mean_squared_error(Y_test_rescaled, predictions))
+    r2 = r2_score(Y_test_rescaled, predictions)
+
     return predictions, rmse, r2
 
 # Example usage
-if __name__ == "__main__":
-    ticker = 'AAPL'  # Change to the stock ticker of your choice
+if __name__ == '__main__':
+    ticker = 'TCS.NS'
     start_date = '2020-01-01'
-    end_date = '2023-12-31'
-    
+    end_date = '2025-01-01'
+
     predictions, rmse, r2 = train_and_predict(ticker, start_date, end_date)
-    print(f"Predictions: {predictions}")
+
+    print(f"Predicted stock prices: {predictions}")
     print(f"RMSE: {rmse}")
     print(f"R²: {r2}")
