@@ -10,9 +10,9 @@ from tensorflow.keras.layers import LSTM, Dense, Dropout
 from tensorflow.keras.callbacks import EarlyStopping
 import datetime
 
-# Function to load stock data (Reduced to 5 years for faster training)
+# Function to load stock data (Increased to 7 years)
 def get_stock_data(ticker):
-    stock_data = yf.download(ticker, period="5y", interval="1d")  
+    stock_data = yf.download(ticker, period="7y", interval="1d")
     return stock_data
 
 # Function to compute RSI (Relative Strength Index)
@@ -23,8 +23,8 @@ def compute_rsi(data, window=14):
     rs = gain / loss
     return 100 - (100 / (1 + rs))
 
-# Function to compute Bollinger Bands
-def compute_bollinger_bands(data, window=20):
+# Function to compute Bollinger Bands (Increased window to 30)
+def compute_bollinger_bands(data, window=30):
     rolling_mean = data.rolling(window=window).mean()
     rolling_std = data.rolling(window=window).std()
     upper_band = rolling_mean + (rolling_std * 2)
@@ -53,17 +53,20 @@ def add_technical_indicators(stock_data):
     stock_data['MACD'], stock_data['Signal'] = compute_macd(stock_data['Close'])
     stock_data['Volatility'] = compute_volatility(stock_data['Close'])
     
+    # **New Feature: Exponential Moving Average (EMA)**
+    stock_data['EMA_20'] = stock_data['Close'].ewm(span=20, adjust=False).mean()
+    
     stock_data.dropna(inplace=True)  # Remove NaN values
     return stock_data
 
 # Function to preprocess stock data
 def preprocess_data(stock_data):
-    features = stock_data[['Close', 'SMA_50', 'SMA_200', 'RSI', 'Upper_BB', 'Lower_BB', 'MACD', 'Signal', 'Volatility']].values
+    features = stock_data[['Close', 'SMA_50', 'SMA_200', 'RSI', 'Upper_BB', 'Lower_BB', 'MACD', 'Signal', 'Volatility', 'EMA_20']].values
     
     scaler = MinMaxScaler(feature_range=(0, 1))
     scaled_data = scaler.fit_transform(features)
     
-    train_size = int(len(scaled_data) * 0.8)
+    train_size = int(len(scaled_data) * 0.9)  # **Increased training data (90-10 split)**
     train_data, test_data = scaled_data[:train_size], scaled_data[train_size:]
 
     def create_dataset(data, time_step=60):
@@ -81,25 +84,25 @@ def preprocess_data(stock_data):
 
     return X_train, Y_train, X_test, Y_test, scaler
 
-# Function to build LSTM model (Reduced complexity)
+# Function to build LSTM model (Increased LSTM units, reduced Dropout)
 def build_lstm_model(input_shape):
     model = Sequential([
-        LSTM(50, return_sequences=True, input_shape=input_shape),
-        Dropout(0.2),
-        LSTM(50, return_sequences=False),
-        Dropout(0.2),
+        LSTM(80, return_sequences=True, input_shape=input_shape),
+        Dropout(0.1),
+        LSTM(80, return_sequences=False),
+        Dropout(0.1),
         Dense(1)
     ])
     model.compile(optimizer='adam', loss='mean_squared_error')
     return model
 
-# Function to train the model (Using Early Stopping to prevent overfitting)
+# Function to train the model (Using Early Stopping)
 def train_model(X_train, Y_train):
     model = build_lstm_model((X_train.shape[1], X_train.shape[2]))
 
     early_stopping = EarlyStopping(monitor='loss', patience=5, restore_best_weights=True)
 
-    model.fit(X_train, Y_train, epochs=30, batch_size=32, verbose=0, callbacks=[early_stopping])
+    model.fit(X_train, Y_train, epochs=50, batch_size=32, verbose=0, callbacks=[early_stopping])
     
     return model
 
@@ -121,10 +124,10 @@ def train_and_predict(ticker, progress_bar):
         
         # Inverse transform to get real prices
         predicted_stock_price = scaler.inverse_transform(
-            np.concatenate([predicted_stock_price, np.zeros((predicted_stock_price.shape[0], 8))], axis=1)
+            np.concatenate([predicted_stock_price, np.zeros((predicted_stock_price.shape[0], 9))], axis=1)
         )[:, 0]
         Y_test_actual = scaler.inverse_transform(
-            np.concatenate([Y_test.reshape(-1, 1), np.zeros((Y_test.shape[0], 8))], axis=1)
+            np.concatenate([Y_test.reshape(-1, 1), np.zeros((Y_test.shape[0], 9))], axis=1)
         )[:, 0]
 
         predictions.append(predicted_stock_price[-1])
