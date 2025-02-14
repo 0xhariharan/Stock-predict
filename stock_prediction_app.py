@@ -37,7 +37,7 @@ def calculate_indicators(stock_data):
     stock_data['Volatility'] = stock_data['Close'].rolling(window=14).std()
 
     # Drop rows with NaN values after indicator calculations
-    stock_data.dropna(inplace=True)
+    stock_data = stock_data.dropna()
 
     return stock_data
 
