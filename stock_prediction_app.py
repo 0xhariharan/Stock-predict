@@ -1,3 +1,4 @@
+pip install ta-lib
 import os
 import numpy as np
 import pandas as pd
