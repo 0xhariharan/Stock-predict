@@ -3,11 +3,14 @@ import yfinance as yf
 import numpy as np
 import pandas as pd
 import tensorflow as tf
+import os
+import datetime
 from sklearn.preprocessing import MinMaxScaler
 from sklearn.metrics import mean_squared_error, r2_score
-from tensorflow.keras.models import Sequential
+from tensorflow.keras.models import Sequential, load_model
 from tensorflow.keras.layers import LSTM, Dense, Dropout
-import datetime
+
+MODEL_PATH = "saved_model.h5"  # File path to save the trained model
 
 # Function to fetch stock data
 def get_stock_data(ticker):
@@ -91,17 +94,34 @@ def build_lstm_model(input_shape):
     model.compile(optimizer='adam', loss='mean_squared_error')
     return model
 
+# Save the trained model
+def save_model(model):
+    model.save(MODEL_PATH)
+
+# Load the saved model
+def load_saved_model():
+    if os.path.exists(MODEL_PATH):
+        return load_model(MODEL_PATH)
+    return None
+
 # Train and predict stock price
-def train_and_predict(ticker, progress_bar):
+def train_and_predict(ticker, progress_bar, retrain=False):
     try:
         stock_data = get_stock_data(ticker)
         stock_data = add_technical_indicators(stock_data)
 
         X_train, Y_train, X_test, Y_test, scaler = preprocess_data(stock_data)
 
-        model = build_lstm_model((X_train.shape[1], X_train.shape[2]))
-
-        model.fit(X_train, Y_train, epochs=30, batch_size=32, verbose=0)  # Faster training
+        # Check if we already have a trained model
+        if os.path.exists(MODEL_PATH) and not retrain:
+            st.success("✅ Using saved model to predict")
+            model = load_saved_model()
+        else:
+            st.warning("⚡ Training new model, this may take time...")
+            model = build_lstm_model((X_train.shape[1], X_train.shape[2]))
+            model.fit(X_train, Y_train, epochs=30, batch_size=32, verbose=0)
+            save_model(model)  # Save model after training
+            st.success("✅ Model trained and saved!")
 
         predicted_stock_price = model.predict(X_test)
 
@@ -127,10 +147,10 @@ def train_and_predict(ticker, progress_bar):
         return None, None, None
 
 # Function to display prediction result
-def get_next_day_prediction(ticker):
-    with st.spinner('Training model... Please wait'):
+def get_next_day_prediction(ticker, retrain=False):
+    with st.spinner('Processing... Please wait'):
         progress_bar = st.progress(0)
-        final_prediction, rmse, r2 = train_and_predict(ticker, progress_bar)
+        final_prediction, rmse, r2 = train_and_predict(ticker, progress_bar, retrain)
 
         if final_prediction:
             next_day_date = (datetime.datetime.now() + datetime.timedelta(days=1)).strftime('%Y-%m-%d')
@@ -146,6 +166,10 @@ st.write("Enter the stock ticker symbol to predict its next day price.")
 
 ticker = st.text_input("Stock Ticker (e.g., TCS.NS, INFY.NS):")
 predict_button = st.button("Predict")
+retrain_button = st.button("Retrain Model")
 
 if ticker and predict_button:
-    get_next_day_prediction(ticker)
+    get_next_day_prediction(ticker, retrain=False)
+
+if ticker and retrain_button:
+    get_next_day_prediction(ticker, retrain=True)
