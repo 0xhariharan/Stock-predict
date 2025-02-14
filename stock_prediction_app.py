@@ -11,12 +11,12 @@ import datetime
 import matplotlib.pyplot as plt
 import os
 
-# Function to load the real-time data
-def get_realtime_stock_data(ticker, interval):
-    stock_data = yf.download(ticker, period="1d", interval=interval)
+# Function to load the data
+def get_stock_data(ticker, interval='1d'):
+    stock_data = yf.download(ticker, period="10y", interval=interval)  # 10 years of data, can be adjusted
     return stock_data
 
-# Adding technical indicators
+# Adding technical indicators to improve model's learning
 def add_technical_indicators(stock_data):
     stock_data['SMA_50'] = stock_data['Close'].rolling(window=50).mean()
     stock_data['SMA_200'] = stock_data['Close'].rolling(window=200).mean()
@@ -62,7 +62,18 @@ def compute_volatility(data, window=30):
 
 # Function to preprocess the stock data
 def preprocess_data(stock_data):
+    # Ensure there is no missing data
+    stock_data = stock_data.dropna(subset=['Close', 'SMA_50', 'SMA_200', 'RSI', 'Upper_BB', 'Lower_BB', 'MACD', 'Signal', 'Volatility'])
+    
+    if stock_data.empty:
+        raise ValueError("Stock data is empty after removing missing values.")
+
     features = stock_data[['Close', 'SMA_50', 'SMA_200', 'RSI', 'Upper_BB', 'Lower_BB', 'MACD', 'Signal', 'Volatility']].values
+    
+    # Check if there is any missing data in the features array
+    if np.any(np.isnan(features)):
+        raise ValueError("Feature data contains NaN values.")
+    
     scaler = MinMaxScaler(feature_range=(0, 1))
     scaled_data = scaler.fit_transform(features)
 
@@ -80,6 +91,7 @@ def preprocess_data(stock_data):
     X_train, Y_train = create_dataset(train_data)
     X_test, Y_test = create_dataset(test_data)
 
+    # Ensure X_train and X_test are 3D arrays for LSTM input
     X_train = np.reshape(X_train, (X_train.shape[0], X_train.shape[1], X_train.shape[2]))
     X_test = np.reshape(X_test, (X_test.shape[0], X_test.shape[1], X_test.shape[2]))
 
@@ -105,9 +117,9 @@ def load_model(ticker):
     return tf.keras.models.load_model(f"models/{ticker}_model.h5")
 
 # Function to train the model and get predictions
-def train_and_predict(ticker, retrain=False, interval="1d"):
+def train_and_predict(ticker, progress_bar, retrain=False, interval='1d'):
     if retrain or not os.path.exists(f"models/{ticker}_model.h5"):
-        stock_data = get_realtime_stock_data(ticker, interval)
+        stock_data = get_stock_data(ticker, interval)
         stock_data = add_technical_indicators(stock_data)
 
         X_train, Y_train, X_test, Y_test, scaler = preprocess_data(stock_data)
@@ -116,17 +128,13 @@ def train_and_predict(ticker, retrain=False, interval="1d"):
         model.fit(X_train, Y_train, epochs=40, batch_size=64, verbose=0)
 
         save_model(model, ticker)
-        print("Model training completed successfully.")  # Debugging line
 
     else:
         model = load_model(ticker)
 
-    stock_data = get_realtime_stock_data(ticker, interval)
+    stock_data = get_stock_data(ticker, interval)
     stock_data = add_technical_indicators(stock_data)
     X_train, Y_train, X_test, Y_test, scaler = preprocess_data(stock_data)
-
-    # Debugging line to print the shape of X_test
-    print("X_test shape:", X_test.shape)
 
     predicted_stock_price = model.predict(X_test)
 
@@ -140,39 +148,39 @@ def train_and_predict(ticker, retrain=False, interval="1d"):
     
     return predictions, rmse, r2
 
-# Function to get the next prediction
-def get_next_day_prediction(ticker, date, retrain=False, interval="1d"):
+# Function to get the next day prediction
+def get_next_day_prediction(ticker, date, retrain=False, interval='1d'):
     with st.spinner('Training model... Please wait'):
-        final_prediction, rmse, r2 = train_and_predict(ticker, retrain, interval)
+        progress_bar = st.progress(0)
+        final_prediction, rmse, r2 = train_and_predict(ticker, progress_bar, retrain, interval)
 
-    next_prediction_time = (datetime.datetime.strptime(date, "%Y-%m-%d") + datetime.timedelta(minutes=5)).strftime('%Y-%m-%d %H:%M:%S')
+    next_day_date = (datetime.datetime.strptime(date, "%Y-%m-%d") + datetime.timedelta(days=1)).strftime('%Y-%m-%d')
     
-    st.write(f"Prediction for {ticker} on {next_prediction_time}: ₹{final_prediction:.2f}")
+    st.write(f"Prediction for {ticker} on {next_day_date}: ₹{final_prediction:.2f}")
     st.write(f"RMSE: {rmse:.2f}")
     st.write(f"R²: {r2:.2f}")
 
 # Streamlit UI
-st.title("Stock Price Prediction for 5min and 15min")
-st.write("Enter the stock ticker symbol to predict its next price for 5-min and 15-min intervals:")
+st.title("Stock Price Prediction")
+st.write("Enter the stock ticker symbol to predict its next day price:")
 
 ticker = st.text_input("Stock Ticker (e.g., TCS.NS):")
 predict_button = st.button("Predict")
 date = st.date_input("Select Date to Predict", min_value=datetime.date.today())
-
-interval = st.selectbox("Select Interval", options=["5m", "15m"])
+interval = st.selectbox("Select Data Interval", options=["1d", "5m", "15m"])
 
 retrain_button = st.button("Retrain Model")
 
 if ticker and predict_button:
-    get_next_day_prediction(ticker, str(date), interval=interval)
+    get_next_day_prediction(ticker, str(date), retrain=False, interval=interval)
 
 if retrain_button:
     get_next_day_prediction(ticker, str(date), retrain=True, interval=interval)
-    
+
 st.write("### Stock Price Prediction Visualization")
 st.subheader("Predicted vs Actual Prices")
 if ticker:
-    stock_data = get_realtime_stock_data(ticker, interval)
+    stock_data = get_stock_data(ticker, interval)
     stock_data = add_technical_indicators(stock_data)
     
     X_train, Y_train, X_test, Y_test, scaler = preprocess_data(stock_data)
