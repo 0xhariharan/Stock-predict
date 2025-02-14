@@ -1,19 +1,21 @@
 import yfinance as yf
 import pandas as pd
-from sklearn.model_selection import train_test_split
-from sklearn.preprocessing import StandardScaler
-from sklearn.ensemble import RandomForestRegressor
 import numpy as np
+from sklearn.preprocessing import MinMaxScaler
+from sklearn.model_selection import train_test_split
+from sklearn.metrics import mean_squared_error, r2_score
+import tensorflow as tf
+from tensorflow.keras.models import Sequential
+from tensorflow.keras.layers import Dense, LSTM
 import matplotlib.pyplot as plt
+import datetime
 
+# Function to fetch stock data from Yahoo Finance
+def fetch_stock_data(ticker, start_date, end_date, interval):
+    data = yf.download(ticker, start=start_date, end=end_date, interval=interval)
+    return data
 
-# Fetch stock data for a specific ticker symbol
-def fetch_data(ticker):
-    stock_data = yf.download(ticker, period="1y", interval="1d")
-    return stock_data
-
-
-# Calculate indicators without TA-Lib
+# Function to calculate technical indicators
 def calculate_indicators(stock_data):
     # Simple Moving Averages (SMA)
     stock_data['SMA_50'] = stock_data['Close'].rolling(window=50).mean()
@@ -36,76 +38,116 @@ def calculate_indicators(stock_data):
     stock_data['MACD'] = stock_data['EMA_12'] - stock_data['EMA_26']
     stock_data['Signal'] = stock_data['MACD'].ewm(span=9, adjust=False).mean()
 
-    # Volatility
-    stock_data['Volatility'] = stock_data['Close'].rolling(window=14).std()
-
-    # Drop NaN values
-    stock_data = stock_data.dropna(subset=['Close', 'SMA_50', 'SMA_200', 'RSI', 'Upper_BB', 'Lower_BB', 'MACD', 'Signal', 'Volatility'])
+    # Volatility (Standard Deviation of Returns)
+    stock_data['Returns'] = stock_data['Close'].pct_change()
+    stock_data['Volatility'] = stock_data['Returns'].rolling(window=21).std()
 
     return stock_data
 
+# Function to preprocess data for training
+def preprocess_data(stock_data):
+    stock_data = stock_data.dropna(subset=['Close', 'SMA_50', 'SMA_200', 'RSI', 'Upper_BB', 'Lower_BB', 'MACD', 'Signal', 'Volatility'])
+    features = stock_data[['Close', 'SMA_50', 'SMA_200', 'RSI', 'Upper_BB', 'Lower_BB', 'MACD', 'Signal', 'Volatility']]
+    target = stock_data['Close']
 
-# Split the data for training and testing
-def train_predict_model(stock_data):
-    X = stock_data[['SMA_50', 'SMA_200', 'RSI', 'Upper_BB', 'Lower_BB', 'MACD', 'Signal', 'Volatility']]
-    y = stock_data['Close']  # Predicting the closing price
+    # Scale features
+    scaler = MinMaxScaler(feature_range=(0, 1))
+    scaled_features = scaler.fit_transform(features)
+    X = []
+    Y = []
 
-    # Split the data into training and testing sets
-    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+    # Create sequences of data for LSTM model
+    for i in range(60, len(scaled_features)):
+        X.append(scaled_features[i-60:i])
+        Y.append(target[i])
 
-    # Scale the data
-    scaler = StandardScaler()
-    X_train_scaled = scaler.fit_transform(X_train)
-    X_test_scaled = scaler.transform(X_test)
-
-    # Train the model
-    model = RandomForestRegressor(n_estimators=100)
-    model.fit(X_train_scaled, y_train)
-
-    # Make predictions
-    y_pred = model.predict(X_test_scaled)
-
-    # Calculate RMSE
-    rmse = np.sqrt(np.mean((y_pred - y_test) ** 2))
-    print(f"RMSE: {rmse}")
+    X = np.array(X)
+    Y = np.array(Y)
     
+    # Train-test split
+    X_train, X_test, Y_train, Y_test = train_test_split(X, Y, test_size=0.2, shuffle=False)
+    
+    return X_train, Y_train, X_test, Y_test, scaler
+
+# Function to create and train the LSTM model
+def create_model(X_train):
+    model = Sequential()
+    model.add(LSTM(units=50, return_sequences=True, input_shape=(X_train.shape[1], X_train.shape[2])))
+    model.add(LSTM(units=50, return_sequences=False))
+    model.add(Dense(units=1))
+    model.compile(optimizer='adam', loss='mean_squared_error')
     return model
 
+# Function to train and predict using the model
+def train_and_predict(ticker, interval):
+    # Fetch stock data
+    end_date = datetime.datetime.now().strftime('%Y-%m-%d')
+    start_date = (datetime.datetime.now() - datetime.timedelta(days=365)).strftime('%Y-%m-%d')
+    stock_data = fetch_stock_data(ticker, start_date, end_date, interval)
 
-# Predict next day's closing price
-def predict_next_day(model, stock_data):
-    last_data = stock_data.iloc[-1][['SMA_50', 'SMA_200', 'RSI', 'Upper_BB', 'Lower_BB', 'MACD', 'Signal', 'Volatility']].values.reshape(1, -1)
-    predicted_price = model.predict(last_data)
-    print(f"Predicted Next Day Closing Price: {predicted_price[0]}")
+    # Calculate technical indicators
+    stock_data = calculate_indicators(stock_data)
 
+    # Preprocess data for model training
+    X_train, Y_train, X_test, Y_test, scaler = preprocess_data(stock_data)
 
-# Visualize actual vs predicted stock prices
-def plot_predictions(stock_data, y_test, y_pred):
+    # Create the LSTM model
+    model = create_model(X_train)
+
+    # Train the model
+    model.fit(X_train, Y_train, epochs=5, batch_size=32)
+
+    # Predict on test data
+    predictions = model.predict(X_test)
+
+    # Calculate RMSE and R2 score
+    rmse = np.sqrt(mean_squared_error(Y_test, predictions))
+    r2 = r2_score(Y_test, predictions)
+
+    # Inverse transform the predicted prices
+    predictions = scaler.inverse_transform(predictions)
+    Y_test = scaler.inverse_transform(Y_test.reshape(-1, 1))
+
+    # Plot predictions vs true values
     plt.figure(figsize=(10, 6))
-    plt.plot(stock_data.index[-len(y_test):], y_test, label="Actual Prices")
-    plt.plot(stock_data.index[-len(y_test):], y_pred, label="Predicted Prices")
-    plt.title('Actual vs Predicted Stock Prices')
-    plt.xlabel('Date')
-    plt.ylabel('Price (INR)')
+    plt.plot(Y_test, color='blue', label='Actual Stock Price')
+    plt.plot(predictions, color='red', label='Predicted Stock Price')
+    plt.title(f'{ticker} Stock Price Prediction')
+    plt.xlabel('Time')
+    plt.ylabel('Stock Price')
     plt.legend()
     plt.show()
 
+    return predictions[-1], rmse, r2
 
-# Main execution flow
-if __name__ == "__main__":
-    ticker = "TCS.NS"  # You can change this to any stock ticker symbol
-    data = fetch_data(ticker)  # Fetch data for the stock
-    
+# Function to get the next day's prediction
+def get_next_day_prediction(ticker, interval):
+    # Fetch stock data
+    end_date = datetime.datetime.now().strftime('%Y-%m-%d')
+    start_date = (datetime.datetime.now() - datetime.timedelta(days=365)).strftime('%Y-%m-%d')
+    stock_data = fetch_stock_data(ticker, start_date, end_date, interval)
+
     # Calculate technical indicators
-    stock_data = calculate_indicators(data)
+    stock_data = calculate_indicators(stock_data)
 
-    # Train the model and get predictions
-    model = train_predict_model(stock_data)
+    # Preprocess data for model training
+    X_train, Y_train, X_test, Y_test, scaler = preprocess_data(stock_data)
 
-    # Predict the next day's closing price
-    predict_next_day(model, stock_data)
+    # Load trained model and predict
+    model = create_model(X_train)
+    model.fit(X_train, Y_train, epochs=5, batch_size=32)
+    prediction = model.predict(X_test)
 
-    # Visualize actual vs predicted stock prices
-    y_test = stock_data.iloc[-int(0.2 * len(stock_data)):]['Close']
-    y_pred = model.predict(StandardScaler().fit_transform(stock_data[['SMA_50', 'SMA_200', 'RSI', 'Upper_BB', 'Lower_BB', 'MACD', 'Signal', 'Volatility']].iloc[-int(0.2 * len(stock_data)):]))
-    plot_predictions(stock_data, y_test, y_pred)
+    # Inverse transform to get the real stock price
+    prediction = scaler.inverse_transform(prediction)
+
+    return prediction[-1][0]
+
+# Example usage
+if __name__ == '__main__':
+    ticker = 'TCS.NS'  # Change to your desired stock ticker
+    interval = '5m'  # Change to '15m' for 15-minute interval
+    prediction, rmse, r2 = train_and_predict(ticker, interval)
+    print(f"Predicted stock price: {prediction}")
+    print(f"RMSE: {rmse}")
+    print(f"R²: {r2}")
