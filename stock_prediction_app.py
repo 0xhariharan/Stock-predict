@@ -18,18 +18,18 @@ def get_stock_data(ticker, interval='1d'):
 
 # Adding technical indicators to improve model's learning
 def add_technical_indicators(stock_data):
-    # Calculate technical indicators only if enough data is available
+    # Ensure sufficient data for technical indicators
     if len(stock_data) >= 50:
         stock_data['SMA_50'] = stock_data['Close'].rolling(window=50).mean()
     if len(stock_data) >= 200:
         stock_data['SMA_200'] = stock_data['Close'].rolling(window=200).mean()
 
+    # Adding additional indicators
     stock_data['RSI'] = compute_rsi(stock_data['Close'], 14)
     stock_data['Upper_BB'], stock_data['Lower_BB'] = compute_bollinger_bands(stock_data['Close'], window=20)
     stock_data['MACD'], stock_data['Signal'] = compute_macd(stock_data['Close'])
     stock_data['Volatility'] = compute_volatility(stock_data['Close'], window=30)
 
-    stock_data.dropna(inplace=True)
     return stock_data
 
 # Function to compute RSI (Relative Strength Index)
@@ -65,19 +65,25 @@ def compute_volatility(data, window=30):
 
 # Function to preprocess the stock data
 def preprocess_data(stock_data):
-    # Ensure there is no missing data in the required columns
+    # Add technical indicators to the stock data
+    stock_data = add_technical_indicators(stock_data)
+
+    # Ensure all required columns exist in the dataframe
     required_columns = ['Close', 'SMA_50', 'SMA_200', 'RSI', 'Upper_BB', 'Lower_BB', 'MACD', 'Signal', 'Volatility']
-    stock_data = stock_data.dropna(subset=required_columns)
+    for col in required_columns:
+        if col not in stock_data.columns:
+            raise ValueError(f"Column {col} is missing from the stock data.")
     
+    # Drop rows with missing values
+    stock_data.dropna(subset=required_columns, inplace=True)
+
+    # Check if the dataframe is empty after dropping missing values
     if stock_data.empty:
         raise ValueError("Stock data is empty after removing missing values.")
 
+    # Prepare the feature matrix
     features = stock_data[['Close', 'SMA_50', 'SMA_200', 'RSI', 'Upper_BB', 'Lower_BB', 'MACD', 'Signal', 'Volatility']].values
-    
-    # Check if there is any missing data in the features array
-    if np.any(np.isnan(features)):
-        raise ValueError("Feature data contains NaN values.")
-    
+
     scaler = MinMaxScaler(feature_range=(0, 1))
     scaled_data = scaler.fit_transform(features)
 
@@ -88,8 +94,8 @@ def preprocess_data(stock_data):
     def create_dataset(data, time_step=60):
         X, Y = [], []
         for i in range(len(data) - time_step - 1):
-            X.append(data[i:(i + time_step), :-1])
-            Y.append(data[i + time_step, 0])
+            X.append(data[i:(i + time_step), :-1])  # Exclude the target column (Close)
+            Y.append(data[i + time_step, 0])  # Predict the Close column
         return np.array(X), np.array(Y)
 
     X_train, Y_train = create_dataset(train_data)
@@ -124,8 +130,6 @@ def load_model(ticker):
 def train_and_predict(ticker, progress_bar, retrain=False, interval='1d'):
     if retrain or not os.path.exists(f"models/{ticker}_model.h5"):
         stock_data = get_stock_data(ticker, interval)
-        stock_data = add_technical_indicators(stock_data)
-
         X_train, Y_train, X_test, Y_test, scaler = preprocess_data(stock_data)
 
         model = build_lstm_model((X_train.shape[1], X_train.shape[2]))
@@ -137,7 +141,6 @@ def train_and_predict(ticker, progress_bar, retrain=False, interval='1d'):
         model = load_model(ticker)
 
     stock_data = get_stock_data(ticker, interval)
-    stock_data = add_technical_indicators(stock_data)
     X_train, Y_train, X_test, Y_test, scaler = preprocess_data(stock_data)
 
     predicted_stock_price = model.predict(X_test)
@@ -195,12 +198,10 @@ if ticker:
     predicted_stock_price = scaler.inverse_transform(np.concatenate([predicted_stock_price, np.zeros((predicted_stock_price.shape[0], 8))], axis=1))[:, 0]
     Y_test_actual = scaler.inverse_transform(np.concatenate([Y_test.reshape(-1, 1), np.zeros((Y_test.shape[0], 8))], axis=1))[:, 0]
     
-    fig, ax = plt.subplots()
-    ax.plot(Y_test_actual, color='blue', label='Actual Price')
-    ax.plot(predicted_stock_price, color='red', label='Predicted Price')
-    ax.set_title(f'{ticker} Price Prediction')
-    ax.set_xlabel('Time')
-    ax.set_ylabel('Price')
-    ax.legend()
-    
-    st.pyplot(fig)
+    plt.plot(Y_test_actual, color='blue', label='Actual Stock Price')
+    plt.plot(predicted_stock_price, color='red', label='Predicted Stock Price')
+    plt.title(f"{ticker} Stock Price Prediction")
+    plt.xlabel("Time")
+    plt.ylabel("Stock Price")
+    plt.legend()
+    st.pyplot(plt)
