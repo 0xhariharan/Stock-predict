@@ -1,207 +1,98 @@
-import streamlit as st
-import numpy as np
-import pandas as pd
-import tensorflow as tf
-from sklearn.preprocessing import MinMaxScaler
-from sklearn.metrics import mean_squared_error, r2_score
-from tensorflow.keras.models import Sequential
-from tensorflow.keras.layers import LSTM, Dense, Dropout
-import datetime
-import os
-import requests
-import matplotlib.pyplot as plt
-from upstox_api.api import *
+# stock_prediction.py
 
-# Your Upstox API credentials
+from upstox_api.api import *
+import datetime
+import pandas as pd
+import numpy as np
+import xgboost as xgb
+import matplotlib.pyplot as plt
+from sklearn.model_selection import train_test_split
+from sklearn.metrics import mean_absolute_error, mean_squared_error
+from vaderSentiment.vaderSentiment import SentimentIntensityAnalyzer
+import nltk
+
+# Download Vader Sentiment lexicon
+nltk.download('vader_lexicon')
+
+# Upstox API credentials (replace with your actual credentials securely)
 API_KEY = '6be46ee7-8e84-4c37-9353-63aa896d09bd'
 API_SECRET = '2eqwmvko5i'
 ACCESS_TOKEN = 'eyJ0eXAiOiJKV1QiLCJrZXlfaWQiOiJza192MS4wIiwiYWxnIjoiSFMyNTYifQ.eyJzdWIiOiIyQ0NYRUIiLCJqdGkiOiI2N2FlY2Q2NmZkNjhlZjVlYWZhYzg2ZjUiLCJpc011bHRpQ2xpZW50IjpmYWxzZSwiaWF0IjoxNzM5NTA5MDk0LCJpc3MiOiJ1ZGFwaS1nYXRld2F5LXNlcnZpY2UiLCJleHAiOjE3Mzk1NzA0MDB9.sMDkSpgfAaQRjFR7vHSspZ557NWVHIQMUm58UdT1KPI'
+ # Use your actual Access Token
 
-# Initialize the Upstox API
-upstox = Upstox(API_KEY, API_SECRET)
-upstox.set_access_token(ACCESS_TOKEN)
+# Set up Upstox API
+upstox = Upstox(api_key, api_secret)
+upstox.set_access_token(access_token)
 
-# Function to get stock data from Upstox API
-def get_stock_data(ticker, interval="1d", period="10y"):
-    try:
-        quote = upstox.get_live_market_data('NSE', ticker)
-        stock_data = {
-            'Date': [quote['timestamp']],
-            'Open': [quote['open_price']],
-            'High': [quote['high_price']],
-            'Low': [quote['low_price']],
-            'Close': [quote['last_price']],
-            'Volume': [quote['quantity_traded']]
-        }
-        stock_df = pd.DataFrame(stock_data)
-        stock_df['Date'] = pd.to_datetime(stock_df['Date'])
-        return stock_df
-    except Exception as e:
-        st.error(f"Error fetching data: {e}")
-        return None
+# Fetch historical data (example for TCS stock)
+symbol = 'TCS'
+start_date = datetime.datetime(2023, 1, 1)
+end_date = datetime.datetime.now()
 
-# Compute RSI (Relative Strength Index)
-def compute_rsi(data, window=14):
-    diff = data.diff()
-    gain = (diff.where(diff > 0, 0)).rolling(window=window).mean()
-    loss = (-diff.where(diff < 0, 0)).rolling(window=window).mean()
-    rs = gain / loss
-    rsi = 100 - (100 / (1 + rs))
-    return rsi
+data = upstox.get_ohlc(upstox.get_instruments('NSE')[0], 
+                       from_date=start_date, to_date=end_date, 
+                       interval=Interval.Minute_5)
+df = pd.DataFrame(data)
 
-# Compute Bollinger Bands
-def compute_bollinger_bands(data, window=20):
-    rolling_mean = data.rolling(window=window).mean()
-    rolling_std = data.rolling(window=window).std()
-    upper_band = rolling_mean + (rolling_std * 2)
-    lower_band = rolling_mean - (rolling_std * 2)
-    return upper_band, lower_band
+# Technical Indicator Calculations
+# 1. Simple Moving Average (SMA)
+df['SMA'] = df['close'].rolling(window=14).mean()
 
-# Compute MACD (Moving Average Convergence Divergence)
-def compute_macd(data, short_window=12, long_window=26, signal_window=9):
-    short_ema = data.ewm(span=short_window, min_periods=1, adjust=False).mean()
-    long_ema = data.ewm(span=long_window, min_periods=1, adjust=False).mean()
-    macd = short_ema - long_ema
-    signal = macd.ewm(span=signal_window, min_periods=1, adjust=False).mean()
-    return macd, signal
+# 2. Exponential Moving Average (EMA)
+df['EMA'] = df['close'].ewm(span=14, adjust=False).mean()
 
-# Compute Historical Volatility
-def compute_volatility(data, window=30):
-    log_returns = np.log(data / data.shift(1))
-    volatility = log_returns.rolling(window=window).std() * np.sqrt(window)
-    return volatility
+# 3. Relative Strength Index (RSI)
+delta = df['close'].diff()
+gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
+loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
+rs = gain / loss
+df['RSI'] = 100 - (100 / (1 + rs))
 
-# Add technical indicators to stock data
-def add_technical_indicators(stock_data):
-    stock_data['SMA_50'] = stock_data['Close'].rolling(window=50).mean()
-    stock_data['SMA_200'] = stock_data['Close'].rolling(window=200).mean()
-    stock_data['RSI'] = compute_rsi(stock_data['Close'])
-    stock_data['Upper_BB'], stock_data['Lower_BB'] = compute_bollinger_bands(stock_data['Close'])
-    stock_data['MACD'], stock_data['Signal'] = compute_macd(stock_data['Close'])
-    stock_data['Volatility'] = compute_volatility(stock_data['Close'])
-    stock_data.dropna(inplace=True)
-    return stock_data
+# 4. Moving Average Convergence Divergence (MACD)
+df['EMA_12'] = df['close'].ewm(span=12, adjust=False).mean()
+df['EMA_26'] = df['close'].ewm(span=26, adjust=False).mean()
+df['MACD'] = df['EMA_12'] - df['EMA_26']
+df['MACD_signal'] = df['MACD'].ewm(span=9, adjust=False).mean()
 
-# Preprocess data
-def preprocess_data(stock_data):
-    features = stock_data[['Close', 'SMA_50', 'SMA_200', 'RSI', 'Upper_BB', 'Lower_BB', 'MACD', 'Signal', 'Volatility']].values
-    scaler = MinMaxScaler(feature_range=(0, 1))
-    scaled_data = scaler.fit_transform(features)
+# 5. Bollinger Bands
+df['Bollinger_middle'] = df['close'].rolling(window=20).mean()
+df['Bollinger_upper'] = df['Bollinger_middle'] + (df['close'].rolling(window=20).std() * 2)
+df['Bollinger_lower'] = df['Bollinger_middle'] - (df['close'].rolling(window=20).std() * 2)
 
-    train_size = int(len(scaled_data) * 0.8)
-    train_data = scaled_data[:train_size]
-    test_data = scaled_data[train_size:]
+# Sentiment Analysis
+# Example: Pull stock market news headlines and analyze sentiment
+news = ["Stock market sees positive growth today", "Bearish trend in tech stocks"]
+analyzer = SentimentIntensityAnalyzer()
+sentiment_scores = [analyzer.polarity_scores(headline)['compound'] for headline in news]
+df['Sentiment'] = sum(sentiment_scores) / len(sentiment_scores)  # Average sentiment score
 
-    def create_dataset(data, time_step=60):
-        X, Y = [], []
-        for i in range(len(data) - time_step - 1):
-            X.append(data[i:(i + time_step), :-1])
-            Y.append(data[i + time_step, 0])
-        return np.array(X), np.array(Y)
+# Prepare features and target
+df['Target'] = df['close'].shift(-1)  # Predict next close price
+df.dropna(inplace=True)  # Remove missing values
 
-    X_train, Y_train = create_dataset(train_data)
-    X_test, Y_test = create_dataset(test_data)
+features = ['SMA', 'EMA', 'RSI', 'MACD', 'MACD_signal', 'Bollinger_upper', 'Bollinger_middle', 'Bollinger_lower', 'Sentiment']
+X = df[features]
+y = df['Target']
 
-    return X_train, Y_train, X_test, Y_test, scaler
+# Train-test split
+X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
 
-# Build LSTM model
-def build_lstm_model(input_shape):
-    model = Sequential([
-        LSTM(100, return_sequences=True, input_shape=input_shape),
-        Dropout(0.2),
-        LSTM(100, return_sequences=False),
-        Dropout(0.2),
-        Dense(1)
-    ])
-    model.compile(optimizer='adam', loss='mean_squared_error')
-    return model
+# Train the model using XGBoost
+model = xgb.XGBRegressor(objective='reg:squarederror')
+model.fit(X_train, y_train)
 
-# Save and load model functions
-def save_model(model, ticker):
-    model.save(f"models/{ticker}_model.h5")
+# Make predictions
+predictions = model.predict(X_test)
 
-def load_model(ticker):
-    return tf.keras.models.load_model(f"models/{ticker}_model.h5")
+# Evaluate the model
+mae = mean_absolute_error(y_test, predictions)
+rmse = np.sqrt(mean_squared_error(y_test, predictions))
 
-# Train or load the model
-def train_and_predict(ticker, progress_bar, retrain=False):
-    model_path = f"models/{ticker}_model.h5"
+print(f"Mean Absolute Error: {mae}")
+print(f"Root Mean Squared Error: {rmse}")
 
-    if retrain or not os.path.exists(model_path):
-        stock_data = get_stock_data(ticker)
-        stock_data = add_technical_indicators(stock_data)
-        X_train, Y_train, X_test, Y_test, scaler = preprocess_data(stock_data)
-
-        model = build_lstm_model((X_train.shape[1], X_train.shape[2]))
-        model.fit(X_train, Y_train, epochs=40, batch_size=64, verbose=0)
-
-        save_model(model, ticker)
-    else:
-        model = load_model(ticker)
-
-    stock_data = get_stock_data(ticker)
-    stock_data = add_technical_indicators(stock_data)
-    X_train, Y_train, X_test, Y_test, scaler = preprocess_data(stock_data)
-
-    predicted_stock_price = model.predict(X_test)
-
-    predicted_stock_price = scaler.inverse_transform(
-        np.concatenate([predicted_stock_price, np.zeros((predicted_stock_price.shape[0], 8))], axis=1)
-    )[:, 0]
-    Y_test_actual = scaler.inverse_transform(
-        np.concatenate([Y_test.reshape(-1, 1), np.zeros((Y_test.shape[0], 8))], axis=1)
-    )[:, 0]
-
-    rmse = np.sqrt(mean_squared_error(Y_test_actual, predicted_stock_price))
-    r2 = r2_score(Y_test_actual, predicted_stock_price)
-
-    return predicted_stock_price[-1], rmse, r2
-
-# Get next day prediction
-def get_next_day_prediction(ticker, date, retrain=False):
-    with st.spinner('Training model... Please wait'):
-        progress_bar = st.progress(0)
-        final_prediction, rmse, r2 = train_and_predict(ticker, progress_bar, retrain)
-
-    next_day_date = (datetime.datetime.strptime(date, "%Y-%m-%d") + datetime.timedelta(days=1)).strftime('%Y-%m-%d')
-
-    st.write(f"**Prediction for {ticker} on {next_day_date}:** ₹{final_prediction:.2f}")
-    st.write(f"**RMSE:** {rmse:.2f}")
-    st.write(f"**R² Score:** {r2:.2f}")
-
-# Streamlit UI
-st.title("📈 Stock Price Prediction")
-st.write("Enter the stock ticker to predict its next-day price.")
-
-ticker = st.text_input("Stock Ticker (e.g., TCS.NS):")
-date = st.date_input("Select Prediction Date", min_value=datetime.date.today())
-
-predict_button = st.button("Predict")
-retrain_button = st.button("Retrain Model")
-
-if ticker and predict_button:
-    get_next_day_prediction(ticker, str(date))
-
-if retrain_button:
-    get_next_day_prediction(ticker, str(date), retrain=True)
-
-# Plot actual vs predicted prices
-st.subheader("📊 Predicted vs Actual Prices")
-if ticker:
-    st.write("Visualizing the model's accuracy...")
-    stock_data = get_stock_data(ticker)
-    stock_data = add_technical_indicators(stock_data)
-
-    _, _, X_test, Y_test, scaler = preprocess_data(stock_data)
-    model = load_model(ticker)
-    predicted_stock_price = model.predict(X_test)
-
-    predicted_stock_price = scaler.inverse_transform(
-        np.concatenate([predicted_stock_price, np.zeros((predicted_stock_price.shape[0], 8))], axis=1)
-    )[:, 0]
-
-    plt.figure(figsize=(10, 5))
-    plt.plot(predicted_stock_price, label="Predicted")
-    plt.plot(Y_test, label="Actual")
-    plt.legend()
-    st.pyplot(plt)
+# Visualize the results
+plt.plot(y_test.values, label='Actual Prices')
+plt.plot(predictions, label='Predicted Prices')
+plt.legend()
+plt.show()
