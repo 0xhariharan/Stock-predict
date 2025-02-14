@@ -36,11 +36,16 @@ def calculate_indicators(stock_data):
     # Volatility (Standard deviation)
     stock_data['Volatility'] = stock_data['Close'].rolling(window=14).std()
 
+    # Drop rows with NaN values after indicator calculations
+    stock_data.dropna(inplace=True)
+
     return stock_data
 
 # Function to fetch stock data and calculate indicators
 def fetch_data(ticker, start_date, end_date):
     stock_data = yf.download(ticker, start=start_date, end=end_date, interval="1d")
+    if stock_data.empty:
+        raise ValueError(f"No data found for {ticker} from {start_date} to {end_date}.")
     stock_data = calculate_indicators(stock_data)
     return stock_data
 
